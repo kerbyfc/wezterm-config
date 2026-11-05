@@ -194,16 +194,24 @@ local link_opts = {
 }
 
 -- Каталог панели: объект Url в современных версиях WezTerm, строка file://… в
--- старых, nil — если неизвестен.
+-- старых, nil — если неизвестен. На Windows Git Bash отдаёт /c/Users/…; для
+-- spawn_window и cmd.exe нужен родной C:/Users/….
+local function native_path(path)
+  if windows and path ~= nil then
+    path = path:gsub('^/(%a)/', '%1:/'):gsub('^/(%a:)/', '%1/')
+  end
+  return path
+end
+
 local function pane_cwd(pane)
   local cwd = pane:get_current_working_dir()
   if cwd == nil then
     return nil
   end
   if type(cwd) == 'string' then
-    return file_links.file_uri_path(cwd)
+    return native_path(file_links.file_uri_path(cwd))
   end
-  return cwd.file_path
+  return native_path(cwd.file_path)
 end
 
 -- Решение по каждому клику — в лог WezTerm (~/.local/share/wezterm/wezterm-gui-log-<pid>.txt),

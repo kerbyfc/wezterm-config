@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$ConfigOnly
 )
 
@@ -54,7 +54,7 @@ $content = @"
 package.path = [==[$luaPath/?.lua;]==] .. package.path
 return require('config')
 "@
-Set-Content -LiteralPath $stub -Value $content -Encoding UTF8
+[System.IO.File]::WriteAllText($stub, $content, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host "подключено: $stub -> $here"
 Write-Host "дальше: скопируй local.example.lua в local.lua и заполни пути проекта (если нужны ссылки Obsidian и запускалка)."
