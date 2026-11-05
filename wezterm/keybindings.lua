@@ -17,7 +17,14 @@ local M = {}
 -- Cmd+N, как новое окно в браузерах — на Cmd+Shift+N.
 function M.keys(open_mods)
   return {
-    { key = 'n', mods = open_mods, action = act.SpawnTab('CurrentPaneDomain') },
+    {
+      key = 'n',
+      mods = open_mods,
+      action = wezterm.action_callback(function(window, pane)
+        local cwd = pane:get_current_working_dir()
+        window:perform_action(wezterm.action.SpawnCommandInNewTab { cwd = cwd }, pane)
+      end),
+    },
     { key = 'n', mods = open_mods .. '|SHIFT', action = act.SpawnWindow },
     { key = 'g', mods = open_mods, action = act.ShowTabNavigator },
   }
