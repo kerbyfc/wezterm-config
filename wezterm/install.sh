@@ -10,6 +10,13 @@
 
 set -euo pipefail
 
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+        echo "На Windows запусти install.ps1 из PowerShell, а не install.sh" >&2
+        exit 1
+        ;;
+esac
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 stub="$HOME/.wezterm.lua"
 config_only=0
