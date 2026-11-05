@@ -4,6 +4,7 @@
 #   ./install.sh                 поставить WezTerm (если нет) и подключить конфиг
 #   ./install.sh --config-only   только подключить конфиг, WezTerm не ставить
 #
+# Если WezTerm уже установлен — установка не запускается и скрипт не падает.
 # Заглушка ~/.wezterm.lua перезаписывается; прежняя сохраняется рядом с датой.
 # Пути проекта и команда запускалки — в local.lua (см. local.example.lua).
 
@@ -17,7 +18,7 @@ for arg in "$@"; do
     case "$arg" in
         --config-only) config_only=1 ;;
         -h | --help)
-            sed -n '2,9p' "$0"
+            sed -n '2,10p' "$0"
             exit 0
             ;;
         *)
@@ -27,9 +28,27 @@ for arg in "$@"; do
     esac
 done
 
-if [ "$config_only" = 0 ] && ! command -v wezterm >/dev/null 2>&1; then
+wezterm_installed() {
+    if command -v wezterm >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -d "/Applications/WezTerm.app" ] || [ -d "$HOME/Applications/WezTerm.app" ]; then
+        return 0
+    fi
+    if command -v brew >/dev/null 2>&1 && brew list --cask wezterm >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+if [ "$config_only" = 0 ] && ! wezterm_installed; then
     if command -v brew >/dev/null 2>&1; then
-        brew install --cask wezterm
+        if ! brew install --cask wezterm; then
+            if ! wezterm_installed; then
+                echo "WezTerm не установился; поставь его и повтори с --config-only" >&2
+                exit 1
+            fi
+        fi
     else
         echo "WezTerm не установлен, а Homebrew нет: поставь WezTerm и повтори с --config-only" >&2
         exit 1

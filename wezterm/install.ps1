@@ -6,13 +6,36 @@ $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $stub = Join-Path $env:USERPROFILE '.wezterm.lua'
 
-if (-not $ConfigOnly) {
-    $wezterm = Get-Command wezterm -ErrorAction SilentlyContinue
-    if (-not $wezterm) {
-        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            throw 'WezTerm не установлен, winget нет: поставь WezTerm и запусти с -ConfigOnly'
+function Find-WezTerm {
+    $candidates = @()
+    $command = Get-Command wezterm.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        $candidates += $command.Source
+    }
+    $candidates += (Join-Path $env:ProgramFiles 'WezTerm\wezterm.exe')
+    if (${env:ProgramFiles(x86)}) {
+        $candidates += (Join-Path ${env:ProgramFiles(x86)} 'WezTerm\wezterm.exe')
+    }
+    $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\WezTerm\wezterm.exe')
+    foreach ($path in $candidates) {
+        if ($path -and (Test-Path -LiteralPath $path)) {
+            return $path
         }
+    }
+    return $null
+}
+
+if (-not $ConfigOnly -and -not (Find-WezTerm)) {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw 'WezTerm не установлен, winget нет: поставь WezTerm и запусти с -ConfigOnly'
+    }
+    try {
         winget install --id wez.wezterm -e --accept-source-agreements --accept-package-agreements
+    } catch {
+        # winget мог отказать «уже установлен»; ниже проверяем, что WezTerm на месте.
+    }
+    if (-not (Find-WezTerm)) {
+        throw 'WezTerm не установился: поставь его и запусти с -ConfigOnly'
     }
 }
 
