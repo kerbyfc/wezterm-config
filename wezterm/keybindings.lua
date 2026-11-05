@@ -21,7 +21,14 @@ function M.keys(open_mods)
       key = 'n',
       mods = open_mods,
       action = wezterm.action_callback(function(window, pane)
-        window:perform_action(wezterm.action.SpawnCommandInNewTab {}, pane)
+        local cwd = pane:get_current_working_dir()
+        if cwd ~= nil and type(cwd) ~= 'string' then
+          cwd = cwd.file_path
+        end
+        if cwd ~= nil and wezterm.target_triple:find('windows') then
+          cwd = cwd:gsub('^/(%a)/', '%1:/'):gsub('^/(%a:)/', '%1/')
+        end
+        window:perform_action(wezterm.action.SpawnCommandInNewTab { cwd = cwd }, pane)
       end),
     },
     { key = 'n', mods = open_mods .. '|SHIFT', action = act.SpawnWindow },
