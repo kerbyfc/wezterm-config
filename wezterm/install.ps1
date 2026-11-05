@@ -60,7 +60,7 @@ Write-Host "подключено: $stub -> $here"
 $local = Join-Path $here 'local.lua'
 if (-not (Test-Path -LiteralPath $local)) {
     Copy-Item -LiteralPath (Join-Path $here 'local.example.lua') -Destination $local
-    Write-Host "создан $local — машинное впиши туда (game = путь к game.lua проекта)."
+    Write-Host "создан $local — машинное впиши туда."
 } else {
     Write-Host "машинное — в $local (не коммитится)."
 }

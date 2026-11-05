@@ -74,7 +74,7 @@ EOF
 echo "подключено: $stub -> $here"
 if [ ! -e "$here/local.lua" ]; then
     cp "$here/local.example.lua" "$here/local.lua"
-    echo "создан $here/local.lua — машинное впиши туда (game = путь к game.lua проекта)."
+    echo "создан $here/local.lua — машинное впиши туда."
 else
     echo "машинное — в $here/local.lua (не коммитится)."
 fi
