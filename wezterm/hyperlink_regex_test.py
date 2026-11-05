@@ -28,7 +28,7 @@ CASES = [
     ("[Файл](notes/Foo%20Bar.md)", ["notes/Foo%20Bar.md"]),
     ("~/notes/a.png и ./src/check.lua:14", ["~/notes/a.png", "./src/check.lua:14"]),
     ("archive.tar.gz apps/.golangci.yml", ["archive.tar.gz", "apps/.golangci.yml"]),
-    # позиция в файле: так печатают компилятор Go, линтеры и агент
+    # позиция в файле: так печатают компилятор Go, линтеры и другие инструменты
     ("card.go:358:5: undefined: x", ["card.go:358:5"]),
     ("    /Users/a/src/app/card.go:358 +0x24", ["/Users/a/src/app/card.go:358"]),
     ("хвост не цифры — только путь: x.go:abc", ["x.go"]),
@@ -44,12 +44,12 @@ URL_SOURCE = pathlib.Path(__file__).with_name("config.lua").read_text(encoding="
 URL_REGEX = re.compile(re.search(r"regex = \[==\[(.+?)\]==\], format = '\$0'", URL_SOURCE).group(1))
 
 URL_CASES = [
-    ("[Файл](example://adv-uri?uid=b34fc653-1a43-4f26-b904-c70d2d6b843a&vault=notes)",
-     ["example://adv-uri?uid=b34fc653-1a43-4f26-b904-c70d2d6b843a&vault=notes"]),
+    ("[Файл](example://adv-uri?uid=b34fc653-1a43-4f26-b904-c70d2d6b843a&mode=notes)",
+     ["example://adv-uri?uid=b34fc653-1a43-4f26-b904-c70d2d6b843a&mode=notes"]),
     ("[!271](https://gitlab.com/group/project/-/merge_requests/271)",
      ["https://gitlab.com/group/project/-/merge_requests/271"]),
-    ("обычный example://adv-uri?uid=abc&vault=notes без скобок",
-     ["example://adv-uri?uid=abc&vault=notes"]),
+    ("обычный example://adv-uri?uid=abc&mode=notes без скобок",
+     ["example://adv-uri?uid=abc&mode=notes"]),
 ]
 
 
