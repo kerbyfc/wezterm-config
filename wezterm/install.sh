@@ -72,5 +72,10 @@ return require('config')
 EOF
 
 echo "подключено: $stub -> $here"
-echo "дальше: cp '$here/local.example.lua' '$here/local.lua' и заполни пути проекта (если нужны ссылки Obsidian и запускалка)."
+if [ ! -e "$here/local.lua" ]; then
+    cp "$here/local.example.lua" "$here/local.lua"
+    echo "создан $here/local.lua — машинное впиши туда (game = путь к game.lua проекта)."
+else
+    echo "машинное — в $here/local.lua (не коммитится)."
+fi
 echo "перезапусти WezTerm."

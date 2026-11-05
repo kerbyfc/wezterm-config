@@ -57,5 +57,11 @@ return require('config')
 [System.IO.File]::WriteAllText($stub, $content, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host "подключено: $stub -> $here"
-Write-Host "дальше: скопируй local.example.lua в local.lua и заполни пути проекта (если нужны ссылки Obsidian и запускалка)."
+$local = Join-Path $here 'local.lua'
+if (-not (Test-Path -LiteralPath $local)) {
+    Copy-Item -LiteralPath (Join-Path $here 'local.example.lua') -Destination $local
+    Write-Host "создан $local — машинное впиши туда (game = путь к game.lua проекта)."
+} else {
+    Write-Host "машинное — в $local (не коммитится)."
+}
 Write-Host "перезапусти WezTerm."
