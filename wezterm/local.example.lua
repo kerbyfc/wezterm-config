@@ -1,6 +1,18 @@
-return {
-  -- Машинное: файл не коммитится и живёт только на этой машине.
-  -- Верни таблицу с setup(ctx) или dofile своего файла, который её возвращает.
-  -- setup = function(ctx)
-  -- end,
-}
+-- Машинное: файл не коммитится и живёт только на этой машине.
+-- Верни таблицу с setup(ctx) или dofile своего файла, который её возвращает.
+--
+-- ctx = {
+--   wezterm, act, config, windows, open_mods,
+--   key = function(name) -> string,       -- phys: на Windows, иначе как есть
+--   pane_cwd = function(pane) -> string,  -- родной путь каталога панели
+--   add_key = function(binding),          -- дописать привязку в config.keys
+--   add_hyperlink_rule = function(rule),  -- поставить правило в начало списка
+-- }
+--
+-- Здесь же задаётся windows_cli — полный путь к CLI редактора на Windows.
+-- return {
+--   windows_cli = 'C:/Program Files/Zed/zed.exe',
+--   setup = function(ctx)
+--   end,
+-- }
+return {}

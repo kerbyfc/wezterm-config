@@ -1,8 +1,7 @@
 # wezterm-config
 
-Личный конфиг WezTerm для macOS и Windows. Клавиши, копирование/вставка в русской
-раскладке, темы, панель вкладок, ссылки на файлы и заметки. Ссылки на Obsidian,
-worktree, запускалка и ссылки агентов включаются через `local.lua`.
+Личный конфиг WezTerm для macOS и Windows: клавиши, копирование/вставка в русской
+раскладке, темы, панель вкладок, ссылки на файлы.
 
 ## Установка
 
@@ -13,11 +12,11 @@ brew install --cask wezterm   # или поставь WezTerm сам
 git clone <этот-репозиторий> ~/Projects/wezterm-config
 cd ~/Projects/wezterm-config/wezterm
 ./install.sh
-cp local.example.lua local.lua   # заполни пути проекта
 ```
 
 `install.sh` ставит WezTerm через Homebrew, если его нет, и пишет заглушку
 `~/.wezterm.lua` на этот каталог. Прежняя заглушка сохраняется рядом с датой.
+Если `local.lua` ещё нет, установщик копирует его из `local.example.lua`.
 
 ### Windows
 
@@ -26,7 +25,6 @@ winget install --id wez.wezterm -e
 git clone <этот-репозиторий> $HOME\Projects\wezterm-config
 cd $HOME\Projects\wezterm-config\wezterm
 powershell -ExecutionPolicy Bypass -File .\install.ps1
-Copy-Item local.example.lua local.lua
 ```
 
 `install.ps1` ставит WezTerm через winget, если его нет, и пишет
@@ -37,20 +35,29 @@ Copy-Item local.example.lua local.lua
 
 ## local.lua
 
-`local.lua` не коммитится. Скопируй `local.example.lua` и заполни:
+`local.lua` не коммитится: машинное живёт только там. Установщик создаёт его из
+`local.example.lua`, если файла ещё нет.
 
-| Поле | Что задаёт |
-|---|---|
-| `project_root` | корень проекта: ссылки на заметки Obsidian, worktree, запускалка |
-| `vault` | каталог хранилища внутри проекта, по умолчанию `obsidian` |
-| `obsidian_tree` | скрипт регистрации хранилища worktree, по умолчанию `scripts/obsidian-tree.sh` |
-| `agent_scheme` | схема ссылок кубиков агентов; по умолчанию `agent` |
-| `launcher_title` | заголовок вкладки запускалки |
-| `launcher_command` | `function(root, windows) -> argv`; без неё запускалка выключена |
-| `windows_cli` | полный путь к CLI Zed на Windows (`ZED_CLI_WINDOWS`) |
+Файл возвращает таблицу с `setup(ctx)` — или функцию, которая получает `ctx`:
 
-Без `project_root` работают обычные пути, URL, редактор и запускалка не включается;
-ссылки на заметки и агентов пропускаются.
+```lua
+return {
+  setup = function(ctx)
+    -- ctx.wezterm, ctx.act, ctx.config, ctx.windows, ctx.open_mods,
+    -- ctx.key(name), ctx.pane_cwd(pane),
+    -- ctx.add_key(binding), ctx.add_hyperlink_rule(rule)
+  end,
+}
+```
+
+`setup` вызывается в конце сборки конфига: `ctx.add_key` дописывает привязку в
+`config.keys`, `ctx.add_hyperlink_rule` ставит правило в начало
+`config.hyperlink_rules`, `ctx.config` — сам конфиг. Если `setup` нет, работает
+только общая часть.
+
+`windows_cli` в той же таблице — полный путь к CLI редактора на Windows. Без него
+ссылка «путь:строка» на Windows показывает уведомление, а не открывает файл чем-то
+другим.
 
 ## Клавиши
 
@@ -66,12 +73,10 @@ Copy-Item local.example.lua local.lua
 | `Ctrl+Shift+T` | `Cmd+Shift+T` | выбор темы |
 | `Ctrl+Shift+P` | `Cmd+Shift+P` | палитра команд |
 | `Ctrl+G` | `Cmd+G` | навигатор вкладок |
-| `Ctrl+Shift+L` (и `Ctrl+L`) | `Cmd+Shift+L` (и `Cmd+L`) | запускалка (если задана в `local.lua`) |
 | `Ctrl+1…9` | `Cmd+1…9` | переключить вкладку |
 
 `Ctrl`/`Cmd`+клик по пути с расширением открывает файл; `file:строка:колонка`
-открывает редактор (Zed), если задан `windows_cli`; заметка хранилища открывается
-в Obsidian при заданном `project_root`.
+открывает редактор (Zed), если задан `windows_cli`.
 
 На macOS `Option+Left/Right` посылают `Esc+b`/`Esc+f` — слово назад/вперёд.
 
@@ -82,9 +87,8 @@ Copy-Item local.example.lua local.lua
 
 ## Файлы
 
-- `config.lua` — основной конфиг и привязки.
-- `file_links.lua` — разбор путей и ссылок, Obsidian.
-- `agent_links.lua`, `agent_transcript.py` — ссылки кубиков агентов.
-- `keybindings.lua`, `launcher_window.lua` — вкладки/окна и запускалка.
-- `open_obsidian.ps1` — вывод Obsidian на передний план на Windows.
+- `config.lua` — основной конфиг и привязки, вызов `local.lua`.
+- `file_links.lua` — разбор путей и ссылок.
+- `keybindings.lua` — вкладки и окна.
+- `local.example.lua` — шаблон `local.lua`.
 - `install.sh`, `install.ps1` — заглушка `~/.wezterm.lua`.

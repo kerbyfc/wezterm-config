@@ -3,13 +3,10 @@
 -- Подключается из ~/.wezterm.lua: заглушка, которую пишет install.sh/install.ps1,
 -- добавляет этот каталог в package.path и делает require('config') (подробности —
 -- README.md рядом). Что даёт:
---   • Cmd+клик (macOS) / Ctrl+клик (Windows) по пути к файлу с расширением:
---     заметка хранилища проекта (.md) открывается в Obsidian, любой другой
---     файл — приложением ОС по умолчанию; правило выбора — file_links.lua;
+--   • Cmd+клик (macOS) / Ctrl+клик (Windows) по пути к файлу с расширением открывает
+--     файл приложением ОС по умолчанию, «путь:строка:колонка» — в редакторе;
+--     разбор — file_links.lua;
 --   • обычный клик только выделяет текст и ссылок не открывает;
---   • Cmd+Shift+L (macOS) / Ctrl+Shift+L (Windows) — запускалка игры основного каталога
---     репозитория (ищется вверх от каталога панели) в своём окне; окно уже
---     есть — переключение на него; правило — launcher_window.lua;
 --   • Cmd+N (macOS) / Ctrl+N (Windows) — новая вкладка в каталоге текущей,
 --     Cmd/Ctrl+Shift+N — новое окно, Cmd/Ctrl+G — навигатор вкладок;
 --     список — keybindings.lua;
@@ -20,33 +17,32 @@
 --   • вне Windows — своя панель вкладок: без «fancy» стиля, без кнопки (+),
 --     ширина вкладки до 32; на Windows панель штатная;
 --   • на Windows оболочка — Git Bash.
+--
+-- Машинная часть — local.lua рядом с конфигом: функция или таблица с setup(ctx).
+-- Она получает собранный конфиг и добавляет свои привязки, правила ссылок и
+-- обработчики.
 
 local wezterm = require('wezterm')
 local act = wezterm.action
 
 local file_links = require('file_links')
-local agent_links = require('agent_links')
 local keybindings = require('keybindings')
-local launcher_window = require('launcher_window')
 
--- Пути проекта, vault и команда запускалки — в local.lua рядом с конфигом.
--- Файла нет — проектные ссылки и запускалка выключены, остальное работает.
-local settings = {}
+local machine = {}
 do
   local ok, value = pcall(require, 'local')
-  if ok and type(value) == 'table' then settings = value end
+  if ok then
+    if type(value) == 'function' then
+      machine.setup = value
+    elseif type(value) == 'table' then
+      machine = value
+    end
+  end
 end
-
-file_links.project_root = settings.project_root
-file_links.vault = settings.vault or 'obsidian'
-file_links.obsidian_tree = settings.obsidian_tree or 'scripts/obsidian-tree.sh'
-agent_links.scheme = settings.agent_scheme or 'agent'
-launcher_window.title = settings.launcher_title or 'Запускалка'
-launcher_window.command = settings.launcher_command
 
 -- WezTerm сам отслеживает для автоперезагрузки только файл конфига, то есть
 -- заглушку; правки в репозитории должны подхватываться так же.
-for _, module in ipairs({ 'config', 'file_links', 'agent_links', 'keybindings', 'launcher_window' }) do
+for _, module in ipairs({ 'config', 'file_links', 'keybindings' }) do
   wezterm.add_to_config_reload_watch_list(package.searchpath(module, package.path))
 end
 
@@ -87,9 +83,9 @@ config.font_size = 19.3
 
 -- Правила ссылок перечислены явно, а не взяты из wezterm.default_hyperlink_rules(): во
 -- встроенном правиле голого URL завершающая `)` входит в адрес, и закрывающая скобка
--- markdown-ссылки `[имя](url)` оказывалась частью URL — Obsidian получал `vault=obsidian)`
--- и не находил хранилище. Здесь тот же набор, но `)` в конце адреса не захватывается.
--- Первые три правила разбирают URL, уже заключённый в скобки, и отдают его без них.
+-- markdown-ссылки `[имя](url)` оказывалась частью URL. Здесь тот же набор, но `)` в
+-- конце адреса не захватывается. Первые три правила разбирают URL, уже заключённый в
+-- скобки, и отдают его без них. Машинные правила добавляет local.lua в начало списка.
 config.hyperlink_rules = {
   { regex = [==[\((\w+://\S+)\)]==], format = '$1' },
   { regex = [==[\[(\w+://\S+)\]]==], format = '$1' },
@@ -190,7 +186,7 @@ local link_opts = {
   home = wezterm.home_dir,
   exists = exists,
   find = find_in_tree,
-  windows_cli = settings.windows_cli,
+  windows_cli = machine.windows_cli,
 }
 
 -- Каталог панели: объект Url в современных версиях WezTerm, строка file://… в
@@ -216,73 +212,9 @@ end
 
 -- Решение по каждому клику — в лог WezTerm (~/.local/share/wezterm/wezterm-gui-log-<pid>.txt),
 -- рядом с его собственной строкой «clicking …».
-local open_obsidian_script = package.searchpath('file_links', package.path)
-  :gsub('file_links%.lua$', 'open_obsidian.ps1')
-
--- Отрисовщик стенограммы субагента — сосед agent_links.lua, как open_obsidian.ps1
--- у file_links. Нужен только ссылке субагента.
-local agent_transcript_script = package.searchpath('agent_links', package.path)
-  :gsub('agent_links%.lua$', 'agent_transcript.py')
-
 local function open_target(text, target)
-  local argv = file_links.open_argv(target, windows, open_obsidian_script)
-  if argv == nil then
-    wezterm.log_info('open-uri: ' .. text .. ' -> ' .. target)
-    wezterm.open_with(target)
-    return
-  end
-  wezterm.log_info('open-uri: ' .. text .. ' -> ' .. table.concat(argv, ' '))
-  wezterm.background_child_process(argv)
-end
-
--- Ссылка кубика агента открывается в новом окне WezTerm: `opencode --session`,
--- `claude attach` и пейджер стенограммы — интерактивные программы, им нужен tty,
--- и окно закрывается вместе с ними. Нечем открыть — уведомление, как у
--- ненайденного файла: молчание выглядело бы как «ссылка не нажалась».
-local function open_agent(window, uri, link)
-  local argv = agent_links.argv(link, windows, agent_transcript_script)
-  if argv == nil then
-    local message = 'Переписка агента не открывается: ' .. uri
-    wezterm.log_error(message)
-    window:toast_notification('WezTerm', message, nil, 4000)
-    return
-  end
-  wezterm.log_info('open-uri: ' .. uri .. ' -> ' .. table.concat(argv, ' '))
-  wezterm.mux.spawn_window({ args = argv })
-end
-
--- Запускалка игры в своём окне, одна на все окна WezTerm: вкладка помечена
--- заголовком, повторное нажатие переключает на неё (вкладку — и окно вперёд).
--- Каталог репозитория — от панели, где нажали; вне репозитория — уведомление.
-local function open_launcher(window, pane)
-  local tab, mux_window = launcher_window.find_tab(wezterm.mux.all_windows())
-  if tab ~= nil then
-    tab:activate()
-    mux_window:gui_window():focus()
-    return
-  end
-  local root = launcher_window.repo_root(pane_cwd(pane))
-  if root == nil then
-    local message = 'Запускалка: панель не в проекте'
-    wezterm.log_error(message)
-    window:toast_notification('WezTerm', message, nil, 4000)
-    return
-  end
-  local argv = launcher_window.argv(root, windows)
-  if argv == nil then
-    local message = 'Запускалка не настроена: local.lua → launcher_command'
-    wezterm.log_error(message)
-    window:toast_notification('WezTerm', message, nil, 4000)
-    return
-  end
-  wezterm.log_info('launcher: ' .. table.concat(argv, ' '))
-  local new_tab, _, new_window = wezterm.mux.spawn_window({ args = argv, cwd = root })
-  new_tab:set_title(launcher_window.title)
-  local gui = new_window:gui_window()
-  -- Окно запускалки — только она: панель вкладок ей ни к чему, а заголовок
-  -- вкладки остаётся меткой для find_tab. Переопределение — на это окно.
-  gui:set_config_overrides({ enable_tab_bar = false })
-  gui:focus()
+  wezterm.log_info('open-uri: ' .. text .. ' -> ' .. target)
+  wezterm.open_with(target)
 end
 
 -- Создаем список всех встроенных тем для меню выбора
@@ -293,12 +225,7 @@ end
 -- Сортируем темы по алфавиту
 table.sort(choices, function(a, b) return a.label < b.label end)
 
--- Событием, а не action_callback: так его может вызвать и зонд (smoke.lua).
-wezterm.on('open-launcher', open_launcher)
 config.keys = {
-  { key = key('l'), mods = open_mods, action = act.EmitEvent('open-launcher') },
-  -- Ctrl/Cmd+Shift+L: тот же запускалкa; встроенную палитру WezTerm перекрываем ниже.
-  { key = key('l'), mods = open_mods .. '|SHIFT', action = act.EmitEvent('open-launcher') },
   -- Односоставные сочетания на обеих системах: Ctrl на Windows, Cmd на macOS.
   { key = key('t'), mods = open_mods .. '|SHIFT', action = act.InputSelector {
     title = 'Выберите тему (Color Scheme)',
@@ -314,13 +241,6 @@ config.keys = {
 }
 
 if windows then
-  -- Ctrl+Shift+L — встроенная палитра WezTerm; на Windows тот же аккорд должен
-  -- открывать запускалку. phys:L ловит русскую раскладку, обычный l — английскую.
-  config.keys[#config.keys + 1] = {
-    key = 'l',
-    mods = open_mods .. '|SHIFT',
-    action = act.EmitEvent('open-launcher'),
-  }
   -- Ctrl+C: с выделением — копия, без выделения — прерывание процесса.
   config.keys[#config.keys + 1] = {
     key = key('c'),
@@ -377,22 +297,10 @@ for _, binding in ipairs(keybindings.keys(open_mods)) do
   config.keys[#config.keys + 1] = binding
 end
 
--- Файл открывает: Obsidian — заметку хранилища (у дерева — через
--- scripts/obsidian-tree.sh, он же регистрирует хранилище и при необходимости
--- перезапускает Obsidian; секунды на node — уведомление, чтобы клик не казался
--- пустым), редактор — путь с позицией, ОС — всё остальное.
+-- Файл открывает редактор — путь с позицией, ОС — всё остальное.
 local function open_path(window, text, path, position)
-  local note = file_links.tree_note(path)
-  if note ~= nil then
-    local argv = file_links.tree_open_argv(note, windows)
-    wezterm.log_info('open-uri: ' .. text .. ' -> ' .. table.concat(argv, ' '))
-    window:toast_notification('WezTerm', 'Открываю Obsidian дерева ' .. note.tree:match('[^/]+$'), nil, 4000)
-    wezterm.background_child_process(argv)
-    return
-  end
-
-  if position ~= nil and not file_links.is_vault_note(path) then
-    local argv = file_links.editor_argv(path, position, windows, os.getenv('ZED_CLI_WINDOWS'))
+  if position ~= nil then
+    local argv = file_links.editor_argv(path, position, windows, link_opts.windows_cli)
     if argv == nil then
       local message = 'Редактор: на Windows задайте путь к CLI Zed в переменной ZED_CLI_WINDOWS'
       wezterm.log_error(message)
@@ -408,23 +316,10 @@ local function open_path(window, text, path, position)
 end
 
 wezterm.on('open-uri', function(window, pane, uri)
-  -- Ссылка кубика агента: схема своя, и разбирает её agent_links. Проверяется
-  -- раньше file_links -- у file-line свой префикс, пересечься они не могут, но так
-  -- видно, что это отдельный вид ссылки, а не путь к файлу.
-  local agent = agent_links.parse(uri)
-  if agent ~= nil then
-    open_agent(window, uri, agent)
-    return false
-  end
-
   local text = file_links.link_text(uri)
   if text == nil then
-    if file_links.open_argv(uri, windows, open_obsidian_script) == nil then
-      -- Не наш случай: WezTerm открывает ссылку сам.
-      return
-    end
-    open_target(uri, uri)
-    return false
+    -- Не наш случай: WezTerm открывает ссылку сам или её разбирает local.lua.
+    return
   end
 
   local cwd = pane_cwd(pane)
@@ -479,5 +374,23 @@ config.colors.tab_bar.inactive_tab_hover = {
   fg_color = '#909090',
   italic = false,
 }
+
+if type(machine.setup) == 'function' then
+  machine.setup({
+    wezterm = wezterm,
+    act = act,
+    config = config,
+    windows = windows,
+    open_mods = open_mods,
+    key = key,
+    pane_cwd = pane_cwd,
+    add_key = function(binding)
+      config.keys[#config.keys + 1] = binding
+    end,
+    add_hyperlink_rule = function(rule)
+      table.insert(config.hyperlink_rules, 1, rule)
+    end,
+  })
+end
 
 return config

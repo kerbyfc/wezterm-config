@@ -1,21 +1,10 @@
 -- file_links.lua — куда открывать файл, по которому кликнули в терминале.
 --
 -- Кликабелен путь к любому файлу с расширением (hyperlink_regex). Правило:
---   • репозиторий — ближайший к корню каталог пути с именем project
---     (без учёта регистра);
---   • файл *.md под <репозиторий>/obsidian/ — заметка хранилища, открывается в
---     Obsidian через obsidian://open?path=<абсолютный путь>: Obsidian сам находит
---     зарегистрированное хранилище, в котором лежит файл;
---   • файл *.md под <репозиторий>/.claude/worktrees/<имя>/obsidian/ — заметка
---     хранилища дерева (tree_note): такое хранилище в Obsidian не
---     зарегистрировано, его сначала открывает scripts/obsidian-tree.sh
---     (регистрирует, при необходимости перезапускает Obsidian), затем заметку;
 --   • путь с позицией — «путь:строка» или «путь:строка:колонка» — Zed
 --     (editor_argv): только он ставит курсор на строку, приложению ОС позицию не
 --     передать;
 --   • всё остальное — приложением, которое ОС назначила для файла по умолчанию.
---     Сюда же попадают файлы из скрытых каталогов хранилища вроде obsidian/.trash
---     (Obsidian их не индексирует).
 --
 -- Имя файла без каталога — так его печатают компилятор и тесты Go
 -- («card.go:358: …») — от каталога панели не разрешается; такие имена ищет по
@@ -25,23 +14,18 @@
 -- в opts, поэтому логика проверяется обычным lua (file_links_test.lua).
 --
 -- opts = {
---   windows = boolean,               -- пути Windows: диск, обратные слэши, MSYS
---   home    = string | nil,          -- для путей вида ~/…
---   exists  = function(path) -> bool -- путь в виде «C:/a/b» или «/a/b»
---   find    = function(cwd, name) -> { path }  -- файлы с таким именем в рабочем
---                                              -- дереве каталога cwd
+--   windows     = boolean,               -- пути Windows: диск, обратные слэши, MSYS
+--   home        = string | nil,          -- для путей вида ~/…
+--   exists      = function(path) -> bool -- путь в виде «C:/a/b» или «/a/b»
+--   find        = function(cwd, name) -> { path }  -- файлы с таким именем в рабочем
+--                                        -- дереве каталога cwd
+--   windows_cli = string | nil,          -- путь к CLI редактора на Windows
 -- }
 --
 -- Внутри модуля путь всегда с прямыми слэшами; на Windows — с буквой диска в
 -- верхнем регистре («C:/Users/…»). Родная форма нужна только на выходе — target.
 
 local M = {}
-
--- Настройка проекта задаётся в local.lua рядом с конфигом. Без неё ссылки на
--- заметки хранилища, worktree и запускалка выключены, а обычные пути и URL работают.
-M.project_root = nil
-M.vault = 'obsidian'
-M.obsidian_tree = 'scripts/obsidian-tree.sh'
 
 -- Схема ссылок, которые создаёт hyperlink_regex: open-uri отличает их от
 -- остальных URI по этому префиксу.
@@ -54,7 +38,7 @@ M.scheme = 'file-line'
 --      если перед ним нет расширения другого файла: «a/b.go и c/d e.md» — две
 --      ссылки, а не одна. Лишний текст, захваченный слева, отрезает resolve —
 --      перебором суффиксов.
---   2. Путь к любому файлу с расширением, без пробелов: «apps/game/x.go»,
+--   2. Путь к любому файлу с расширением, без пробелов: «src/app/x.go»,
 --      «README.md», «archive.tar.gz». Расширение начинается с буквы, поэтому
 --      числа («0.577», «v1.2») ссылками не становятся.
 -- Для обеих:
@@ -65,17 +49,14 @@ M.scheme = 'file-line'
 --   • «@» исключён, чтобы не пересекаться со встроенным правилом почты WezTerm.
 M.hyperlink_regex = [==[(?<![\w:/\\.~@-])(?:(?:[A-Za-z]:)?[^\s"'`<>|()\[\]{}:*?@]*[/\\](?:(?!\.[A-Za-z][A-Za-z0-9_]*\s)[^\n"'`<>|:*?])*?\.md\b|(?:[A-Za-z]:)?[^\s"'`<>|()\[\]{}:*?@]*[^\s"'`<>|()\[\]{}:*?@/\\.]\.[A-Za-z][A-Za-z0-9_]*\b)(?::[0-9]+(?::[0-9]+)?)?]==]
 
--- Кодирование/раскодирование %XX. Нужно и этому модулю (пути из markdown-ссылок,
--- Obsidian URI), и agent_links.lua (значения его ссылок), поэтому обе функции —
--- часть интерфейса.
+-- Кодирование/раскодирование %XX: пути из markdown-ссылок и других URI.
 function M.percent_decode(s)
   return (s:gsub('%%(%x%x)', function(hex)
     return string.char(tonumber(hex, 16))
   end))
 end
 
--- Кодирует всё, кроме unreserved из RFC 3986: так требует Obsidian URI
--- (слэши — %2F, пробелы — %20).
+-- Кодирует всё, кроме unreserved из RFC 3986 (слэши — %2F, пробелы — %20).
 function M.percent_encode(s)
   return (s:gsub('[^%w%-%._~]', function(c)
     return string.format('%%%02X', c:byte())
@@ -257,109 +238,16 @@ function M.repo_matches(text, cwd, opts)
   return opts.find(cwd, name)
 end
 
--- Корень проекта и путь внутри него (сегменты) или nil, если путь не из проекта.
-function M.repo_split(path)
-  local normalized = path:gsub('\\', '/')
-  local root = M.project_root
-  if root == nil or root == '' then
-    return nil
-  end
-  root = root:gsub('\\', '/'):gsub('/+$', '')
-  if normalized:sub(1, #root):lower() ~= root:lower() then
-    return nil
-  end
-  local rest = normalized:sub(#root + 2)
-  local segments = {}
-  for segment in rest:gmatch('[^/]+') do
-    segments[#segments + 1] = segment
-  end
-  return root, segments
-end
-
--- Корень проекта как путь или nil.
-function M.repo_root(path)
-  return M.repo_split(path)
-end
-
--- Заметка хранилища worktree: { tree = '<репозиторий>/.claude/worktrees/<имя>',
--- note = 'путь относительно obsidian/' } или nil. Скрытые каталоги хранилища —
--- как у is_vault_note.
-function M.tree_note(path)
-  local root, relative = M.repo_split(path)
-  if root == nil or #relative < 5 then
-    return nil
-  end
-  if relative[1] ~= '.claude' or relative[2] ~= 'worktrees' or relative[4]:lower() ~= M.vault:lower() then
-    return nil
-  end
-  for i = 5, #relative do
-    if relative[i]:sub(1, 1) == '.' then
-      return nil
-    end
-  end
-  if relative[#relative]:lower():match('%.md$') == nil then
-    return nil
-  end
-  local tree = M.repo_root(path) .. '/' .. table.concat(relative, '/', 1, 3)
-  return { tree = tree, note = table.concat(relative, '/', 5) }
-end
-
-local function shell_quote(s)
-  return "'" .. s:gsub("'", [['\'']]) .. "'"
-end
-
--- Команда открытия заметки worktree для wezterm.background_child_process:
--- scripts/obsidian-tree.sh основного каталога через интерактивный login-shell
--- (node приходит из профиля оболочки; на Windows — Git Bash, каталог по
--- умолчанию у Git for Windows). Пути — в форме bash: на Windows он понимает
--- «C:/…».
-function M.tree_open_argv(note, windows)
-  local root = M.repo_root(note.tree)
-  if root == nil or M.obsidian_tree == nil or M.obsidian_tree == '' then
-    return nil
-  end
-  local script = M.obsidian_tree
-  if script:sub(1, 1) ~= '/' and script:match('^%a:[/\\]') == nil then
-    script = root .. '/' .. script
-  end
-  local command = 'exec ' .. shell_quote(script)
-    .. ' ' .. shell_quote(note.tree) .. ' ' .. shell_quote(note.note)
-  if windows then
-    return { 'C:\\Program Files\\Git\\bin\\bash.exe', '-l', '-i', '-c', command }
-  end
-  return { '/bin/zsh', '-l', '-i', '-c', command }
-end
-
--- Скрытые каталоги хранилища (.trash, .obsidian) Obsidian не индексирует, и
--- obsidian://open файлы из них не открывает.
-function M.is_vault_note(path)
-  local root, relative = M.repo_split(path)
-  if root == nil then
-    return false
-  end
-  if #relative < 2 or relative[1]:lower() ~= M.vault:lower() then
-    return false
-  end
-  for i = 2, #relative do
-    if relative[i]:sub(1, 1) == '.' then
-      return false
-    end
-  end
-  return relative[#relative]:lower():match('%.md$') ~= nil
-end
-
 -- Редактор, который открывает файл на строке, — Zed: CLI принимает
 -- «путь:строка» или «путь:строка:колонка» позиционным аргументом, без ключа.
 -- На macOS его ставит действие редактора cli::InstallCliBinary симлинком
 -- в /usr/local/bin/zed.
 -- На Windows путь CLI Zed не выяснен — это открытый вопрос, путь не угадывается;
--- ветку держит переменная окружения windows_cli (ZED_CLI_WINDOWS на стороне
--- вызывающего), которую задаёт владелец: полный путь к исполняемому файлу,
--- запускается через cmd.exe (работает и для .exe, и для .cmd/.bat). Переменная
--- не задана — результат nil, вызывающий показывает уведомление, а не тихо
--- открывает файл чем-то другим.
--- Позиция есть не у всякой ссылки; без неё файл открывает ОС (target), а заметка
--- хранилища и с позицией идёт в Obsidian — строку он не откроет.
+-- ветку держит windows_cli из opts, которую задаёт владелец: полный путь к
+-- исполняемому файлу, запускается через cmd.exe (работает и для .exe, и для
+-- .cmd/.bat). Не задана — результат nil, вызывающий показывает уведомление, а не
+-- тихо открывает файл чем-то другим.
+-- Позиция есть не у всякой ссылки; без неё файл открывает ОС (target).
 function M.editor_argv(path, position, windows, windows_cli)
   local target = path
   if windows then
@@ -378,33 +266,12 @@ function M.editor_argv(path, position, windows, windows_cli)
   return { '/usr/local/bin/zed', target }
 end
 
--- Что передать ОС на открытие: Obsidian URI для заметки хранилища, иначе
--- родной путь к файлу.
+-- Что передать ОС на открытие: родной путь к файлу.
 function M.target(path, windows)
-  local native = path
   if windows then
-    native = path:gsub('/', '\\')
+    return path:gsub('/', '\\')
   end
-  if M.is_vault_note(path) then
-    return 'obsidian://open?path=' .. M.percent_encode(native)
-  end
-  return native
-end
-
--- Команда открытия цели для wezterm.background_child_process или nil — тогда
--- цель открывает wezterm.open_with.
--- На Windows obsidian://-адрес, открытый через ОС, доходит до уже запущенного
--- Obsidian, но окно на передний план не выходит — кнопка только мигает на панели
--- задач. Такой адрес открывает script (open_obsidian.ps1): он же активирует
--- окно. Адрес идёт отдельным аргументом -File, без разбора PowerShell.
-function M.open_argv(target, windows, script)
-  if not windows or target:sub(1, #'obsidian://') ~= 'obsidian://' then
-    return nil
-  end
-  return {
-    'powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-File', script, target,
-  }
+  return path
 end
 
 return M

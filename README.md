@@ -1,10 +1,10 @@
 # wezterm-config
 
-Личный конфиг WezTerm (macOS и Windows), вынесенный из проекта-источника.
-Настройки не зависят от имени проекта; пути проекта — в `local.lua` (не коммитится).
+Личный конфиг WezTerm (macOS и Windows).
 
 - `wezterm/` — конфиг, модули ссылок, установщики.
-- `wezterm/local.example.lua` — шаблон `local.lua`.
+- `wezterm/local.example.lua` — шаблон `local.lua`; машинное живёт только в
+  `local.lua` (не коммитится).
 
 Установка и клавиши — в [wezterm/README.md](wezterm/README.md).
 
