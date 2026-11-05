@@ -7,7 +7,7 @@
 --     заметка хранилища проекта (.md) открывается в Obsidian, любой другой
 --     файл — приложением ОС по умолчанию; правило выбора — file_links.lua;
 --   • обычный клик только выделяет текст и ссылок не открывает;
---   • Cmd+L (macOS) / Ctrl+L (Windows) — запускалка игры основного каталога
+--   • Cmd+Shift+L (macOS) / Ctrl+Shift+L (Windows) — запускалка игры основного каталога
 --     репозитория (ищется вверх от каталога панели) в своём окне; окно уже
 --     есть — переключение на него; правило — launcher_window.lua;
 --   • Cmd+N (macOS) / Ctrl+N (Windows) — новая вкладка в каталоге текущей,
@@ -289,6 +289,8 @@ table.sort(choices, function(a, b) return a.label < b.label end)
 wezterm.on('open-launcher', open_launcher)
 config.keys = {
   { key = key('l'), mods = open_mods, action = act.EmitEvent('open-launcher') },
+  -- Ctrl/Cmd+Shift+L: тот же запускалкa; встроенную палитру WezTerm перекрываем ниже.
+  { key = key('l'), mods = open_mods .. '|SHIFT', action = act.EmitEvent('open-launcher') },
   -- Односоставные сочетания на обеих системах: Ctrl на Windows, Cmd на macOS.
   { key = key('t'), mods = open_mods .. '|SHIFT', action = act.InputSelector {
     title = 'Выберите тему (Color Scheme)',
@@ -304,6 +306,13 @@ config.keys = {
 }
 
 if windows then
+  -- Ctrl+Shift+L — встроенная палитра WezTerm; на Windows тот же аккорд должен
+  -- открывать запускалку. phys:L ловит русскую раскладку, обычный l — английскую.
+  config.keys[#config.keys + 1] = {
+    key = 'l',
+    mods = open_mods .. '|SHIFT',
+    action = act.EmitEvent('open-launcher'),
+  }
   -- Ctrl+C: с выделением — копия, без выделения — прерывание процесса.
   config.keys[#config.keys + 1] = {
     key = key('c'),

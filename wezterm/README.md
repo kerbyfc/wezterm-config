@@ -66,7 +66,7 @@ Copy-Item local.example.lua local.lua
 | `Ctrl+Shift+T` | `Cmd+Shift+T` | выбор темы |
 | `Ctrl+Shift+P` | `Cmd+Shift+P` | палитра команд |
 | `Ctrl+G` | `Cmd+G` | навигатор вкладок |
-| `Ctrl+L` | `Cmd+L` | запускалка (если задана в `local.lua`) |
+| `Ctrl+Shift+L` (и `Ctrl+L`) | `Cmd+Shift+L` (и `Cmd+L`) | запускалка (если задана в `local.lua`) |
 | `Ctrl+1…9` | `Cmd+1…9` | переключить вкладку |
 
 `Ctrl`/`Cmd`+клик по пути с расширением открывает файл; `file:строка:колонка`
