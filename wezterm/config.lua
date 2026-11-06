@@ -14,8 +14,8 @@
 --   • на Windows Ctrl+C копирует только при выделении, иначе уходит приложению
 --     как прерывание; Ctrl+V вставляет; все сочетания работают в русской раскладке;
 --   • на macOS Option+стрелка — слово назад/вперёд;
---   • вне Windows — своя панель вкладок: без «fancy» стиля, без кнопки (+),
---     ширина вкладки до 32; на Windows панель штатная;
+--   • своя панель вкладок: без «fancy» стиля, без кнопки (+), вкладки растянуты
+--     на всю ширину окна пропорционально длине заголовка — tab_layout.lua;
 --   • на Windows оболочка — Git Bash.
 --
 -- Машинная часть — local.lua рядом с конфигом: функция или таблица с setup(ctx).
@@ -27,6 +27,7 @@ local act = wezterm.action
 
 local file_links = require('file_links')
 local keybindings = require('keybindings')
+local tab_layout = require('tab_layout')
 
 local machine = {}
 do
@@ -42,7 +43,7 @@ end
 
 -- WezTerm сам отслеживает для автоперезагрузки только файл конфига, то есть
 -- заглушку; правки в репозитории должны подхватываться так же.
-for _, module in ipairs({ 'config', 'file_links', 'keybindings' }) do
+for _, module in ipairs({ 'config', 'file_links', 'keybindings', 'tab_layout' }) do
   wezterm.add_to_config_reload_watch_list(package.searchpath(module, package.path))
 end
 
@@ -361,9 +362,7 @@ wezterm.on('open-uri', function(window, pane, uri)
   return false
 end)
 
-config.use_fancy_tab_bar = false
-config.show_new_tab_button_in_tab_bar = false -- скрываем (+), чтобы расчет был точным
-config.tab_max_width = 32
+tab_layout.apply(config)
 
 -- Умолчание WezTerm включает курсив при наведении на неактивную вкладку
 -- (`inactive_tab_hover.italic = true`). Оставляем цвет, убираем начертание.
