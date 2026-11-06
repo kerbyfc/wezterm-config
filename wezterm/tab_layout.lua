@@ -1,7 +1,8 @@
 -- tab_layout.lua — вкладки ретро-панели растянуты на всю ширину окна.
 --
 -- Одна вкладка занимает всю строку. Несколько — делят ширину пропорционально
--- длине подписи «N: заголовок»; не влезают — ужимаются в той же пропорции.
+-- длине подписи «N: заголовок» (заголовок — до 48 символов); не влезают —
+-- ужимаются в той же пропорции.
 --
 -- format-tab-title вызывается на каждую перерисовку панели по разу на вкладку,
 -- поэтому в нём нет обращений к окну и mux: он читает ширину панели из кэша,
@@ -29,6 +30,7 @@ local M = {}
 
 local bar_cells = {} -- window_id -> ширина панели в клетках
 local TAB_MAX_WIDTH = 10000
+local TITLE_MAX = 48 -- длиннее — обрезается с «…»; ширина вкладки по обрезанному
 local layout_key, layout_full, layout_first = nil, nil, nil
 
 local function remember_width(window, pane)
@@ -44,6 +46,9 @@ end
 local function label_of(tab)
   local title = tab.tab_title
   if title == nil or title == '' then title = tab.active_pane.title end
+  if wezterm.column_width(title) > TITLE_MAX then
+    title = wezterm.truncate_right(title, TITLE_MAX - 1) .. '…'
+  end
   return tostring(tab.tab_index + 1) .. ': ' .. title
 end
 
