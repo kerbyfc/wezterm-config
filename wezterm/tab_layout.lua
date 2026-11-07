@@ -115,17 +115,40 @@ function M.format(tab, tabs, max_width)
   return layout_full[i]
 end
 
-function M.apply(config)
+-- Копия colors с цветами панели под тему scheme (таблица из
+-- wezterm.color.get_builtin_schemes(), может быть nil):
+--   • фон панели = цвет активной вкладки: остаток окна меньше клетки сливается
+--     с вкладкой;
+--   • наведение на неактивную вкладку — цвета темы без курсива (умолчание
+--     WezTerm включает курсив).
+-- Активная вкладка, заданная в самом colors, главнее темы. Нужна и при смене темы на лету —
+-- см. выбор темы в config.lua.
+function M.colors_for(colors, scheme)
+  colors = colors or {}
+  local theme = scheme and scheme.tab_bar or {}
+  local copy, tab_bar = {}, {}
+  for k, v in pairs(colors) do copy[k] = v end
+  for k, v in pairs(colors.tab_bar or {}) do tab_bar[k] = v end
+
+  local active = tab_bar.active_tab or theme.active_tab
+  tab_bar.background = active and active.bg_color or '#000000'
+
+  local hover = theme.inactive_tab_hover or { bg_color = '#1f1f1f', fg_color = '#909090' }
+  tab_bar.inactive_tab_hover = { bg_color = hover.bg_color, fg_color = hover.fg_color, italic = false }
+
+  copy.tab_bar = tab_bar
+  return copy
+end
+
+-- schemes — wezterm.color.get_builtin_schemes(), чтобы найти тему config.color_scheme.
+function M.apply(config, schemes)
   config.use_fancy_tab_bar = false
   config.show_new_tab_button_in_tab_bar = false
   config.tab_bar_style = config.tab_bar_style or {}
   config.tab_bar_style.new_tab = '' -- длина (+) вычитается из ширины и у скрытой
   config.tab_bar_style.new_tab_hover = ''
   config.tab_max_width = TAB_MAX_WIDTH -- признак первого прохода, см. выше
-  config.colors = config.colors or {}
-  config.colors.tab_bar = config.colors.tab_bar or {}
-  local active = config.colors.tab_bar.active_tab
-  config.colors.tab_bar.background = active and active.bg_color or '#000000'
+  config.colors = M.colors_for(config.colors, schemes[config.color_scheme or ''])
   wezterm.on('format-tab-title', function(tab, tabs, _, _, _, max_width)
     return M.format(tab, tabs, max_width)
   end)

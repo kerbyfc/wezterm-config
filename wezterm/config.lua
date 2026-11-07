@@ -81,6 +81,9 @@ config.set_environment_variables = environment
 -- Размер шрифта: пять шагов IncreaseFontSize (каждый — +10 %) от 12 pt по
 -- умолчанию, 12 × 1.1⁵ ≈ 19.3 — столько владелец выставлял руками в каждом окне.
 config.font_size = 19.3
+-- Тема по умолчанию; Cmd/Ctrl+Shift+T меняет её только для текущего окна.
+-- Регистр важен: «catppuccin-frappe» — другая встроенная тема, без цветов вкладок.
+config.color_scheme = 'Catppuccin Frappe'
 
 -- Правила ссылок перечислены явно, а не взяты из wezterm.default_hyperlink_rules(): во
 -- встроенном правиле голого URL завершающая `)` входит в адрес, и закрывающая скобка
@@ -219,8 +222,9 @@ local function open_target(text, target)
 end
 
 -- Создаем список всех встроенных тем для меню выбора
+local schemes = wezterm.color.get_builtin_schemes()
 local choices = {}
-for name, _ in pairs(wezterm.color.get_builtin_schemes()) do
+for name, _ in pairs(schemes) do
     table.insert(choices, { label = name })
 end
 -- Сортируем темы по алфавиту
@@ -234,7 +238,10 @@ config.keys = {
     fuzzy = true,
     action = wezterm.action_callback(function(window, pane, id, label)
       if label then
-        window:set_config_overrides({ color_scheme = label })
+        window:set_config_overrides({
+          color_scheme = label,
+          colors = tab_layout.colors_for(config.colors, schemes[label]),
+        })
       end
     end),
   } },
@@ -362,17 +369,7 @@ wezterm.on('open-uri', function(window, pane, uri)
   return false
 end)
 
-tab_layout.apply(config)
-
--- Умолчание WezTerm включает курсив при наведении на неактивную вкладку
--- (`inactive_tab_hover.italic = true`). Оставляем цвет, убираем начертание.
-config.colors = config.colors or {}
-config.colors.tab_bar = config.colors.tab_bar or {}
-config.colors.tab_bar.inactive_tab_hover = {
-  bg_color = '#1f1f1f',
-  fg_color = '#909090',
-  italic = false,
-}
+tab_layout.apply(config, schemes)
 
 if type(machine.setup) == 'function' then
   machine.setup({
