@@ -9,9 +9,9 @@
 -- каждое изменение любого заголовка: плагины opencode и claude code крутят
 -- спиннер в title по много раз в секунду. Кэш раскладки поэтому двухуровневый
 -- и отдельный на окно:
---   • ширина окна, число вкладок, все заголовки и активность те же —
+--   • ширина окна, число вкладок, все заголовки, активность и тема те же —
 --     возвращаются сохранённые строки, без единого вызова wezterm.column_width;
---   • сменились заголовки или активность, но ширины подписей те же
+--   • сменились заголовки, активность или тема, но ширины подписей те же
 --     (кадр спиннера) — распределение ширин и строки первого прохода
 --     не пересчитываются, пересобираются только изменившиеся вкладки;
 --   • изменилась хоть одна ширина подписи, число вкладок или ширина окна —
@@ -51,12 +51,36 @@ local TITLE_MAX = 48 -- длиннее — обрезается с «…»; ши
 local SPINNER = '\xE2\x97[\x90-\x93]'
 local MARKER = '\xE2\x97\x8D'
 -- Неактивной вкладке в состоянии «работаю»/«need input» перекращается только
--- текст (синий/оранжевый), активной — и фон, а текст становится чёрным:
--- цветной текст на светлом фоне активной вкладки темы (розовом у Catppuccin
--- Frappe) не читается.
+-- текст, активной — и фон, а текст становится чёрным: цветной текст на светлом
+-- фоне активной вкладки темы (розовом у Catppuccin Frappe) не читается.
+local ACTIVE_TEXT = '#000000'
+-- Базовые цвета подсветки — из палитры Catppuccin Frappe; служат значениями
+-- по умолчанию, когда палитра темы не нашлась (см. palette ниже).
 local SPINNER_COLOR = '#7aa2f7'
 local NEED_COLOR = '#ef9f76'
-local ACTIVE_TEXT = '#000000'
+
+-- Палитра подсветки под тему: синий — ANSI blue темы (ansi[5]), оранжевый —
+-- 16-й цвет расширенной палитры (у Catppuccin это peach). Чего в теме нет —
+-- из базовых цветов выше. Считается один раз на имя темы; таблицы в кэше
+-- раскладки сравниваются по ссылке, поэтому смена темы сама пересобирает
+-- строки вкладок.
+local palettes = {}
+local function palette(schemes, name)
+  local key = name or ''
+  local p = palettes[key]
+  if p ~= nil then return p end
+  local scheme = schemes[key] or {}
+  local spin, need = SPINNER_COLOR, NEED_COLOR
+  if type(scheme.ansi) == 'table' and scheme.ansi[5] ~= nil then spin = scheme.ansi[5] end
+  if type(scheme.indexed_colors) == 'table' then
+    for _, color in ipairs(scheme.indexed_colors) do
+      if color.index == 16 and color.color ~= nil then need = color.color break end
+    end
+  end
+  p = { spin = spin, need = need }
+  palettes[key] = p
+  return p
+end
 
 -- window_id -> раскладка окна:
 --   cells, n                   — ширина панели и число вкладок, для которых собрано
@@ -64,6 +88,8 @@ local ACTIVE_TEXT = '#000000'
 --                                подписей «N: заголовок» в клетках
 --   act                        — активность вкладок: от неё зависят цвета,
 --                                поэтому в проверках наравне с titles
+--   pal                        — палитра подсветки темы, palette(): от неё
+--                                тоже зависят цвета, сравнивается по ссылке
 --   widths                     — ширины вкладок, distribute(...)
 --   first, full                — строки первого и второго прохода
 local layout = {}
@@ -99,15 +125,15 @@ local function shorten(title)
 end
 
 -- Цвета вкладки по глифу состояния в её заголовке: крутится спиннер — синий,
--- маркер «need input» — оранжевый. Неактивной вкладке перекращается только
--- текст, активной — чёрный текст на цветном фоне (см. цвета выше). Без глифа
--- — nil, остаются цвета темы из colors.tab_bar.
-local function tab_colors(title, is_active)
+-- маркер «need input» — оранжевый, цвета — из палитры темы pal. Неактивной
+-- вкладке перекращается только текст, активной — чёрный текст на цветном
+-- фоне. Без глифа — nil, остаются цвета темы из colors.tab_bar.
+local function tab_colors(title, is_active, pal)
   local color
   if title:find(SPINNER) then
-    color = SPINNER_COLOR
+    color = pal.spin
   elseif title:find(MARKER) then
-    color = NEED_COLOR
+    color = pal.need
   else
     return
   end
@@ -161,7 +187,7 @@ local function fit(label, width, len, fg, bg)
   return wezterm.format(items)
 end
 
-function M.format(tab, tabs, max_width)
+function M.format(tab, tabs, max_width, pal)
   local win = tab.window_id
   local cells = bar_cells[win]
   if cells == nil then return nil end
@@ -170,7 +196,7 @@ function M.format(tab, tabs, max_width)
   local n = #tabs
 
   -- Быстрый путь: ничего не изменилось — раскладка готова.
-  if st ~= nil and st.cells == cells and st.n == n then
+  if st ~= nil and st.cells == cells and st.n == n and st.pal == pal then
     local same = true
     for i = 1, n do
       if st.titles[i] ~= raw_title(tabs[i]) or st.act[i] ~= tabs[i].is_active then
@@ -189,7 +215,7 @@ function M.format(tab, tabs, max_width)
   -- Что-то изменилось. Для вкладок с прежним заголовком ширина подписи
   -- берётся из старой раскладки; column_width зовётся только для новых.
   local old = st
-  st = { cells = cells, n = n, titles = {}, act = {}, short = {}, lens = {}, full = {} }
+  st = { cells = cells, n = n, pal = pal, titles = {}, act = {}, short = {}, lens = {}, full = {} }
   local same_widths = old ~= nil and old.cells == cells and old.n == n
   local weights = {}
   for i = 1, n do
@@ -212,18 +238,18 @@ function M.format(tab, tabs, max_width)
   if same_widths then
     -- Ширины подписей не изменились — например, кадр спиннера в заголовке:
     -- доли и строки первого прохода те же, пересобираются только вкладки
-    -- со сменившимся заголовком или активностью.
+    -- со сменившимся заголовком, активностью или темой.
     st.widths = old.widths
     st.first = old.first
     for i = 1, n do
-      if st.titles[i] == old.titles[i] and st.act[i] == old.act[i] then
+      if old.pal == pal and st.titles[i] == old.titles[i] and st.act[i] == old.act[i] then
         st.full[i] = old.full[i]
       else
         st.full[i] = fit(
           tostring(i) .. ': ' .. st.short[i],
           st.widths[i],
           st.lens[i],
-          tab_colors(st.titles[i], st.act[i])
+          tab_colors(st.titles[i], st.act[i], pal)
         )
       end
     end
@@ -236,7 +262,7 @@ function M.format(tab, tabs, max_width)
         tostring(i) .. ': ' .. st.short[i],
         widths[i],
         st.lens[i],
-        tab_colors(st.titles[i], st.act[i])
+        tab_colors(st.titles[i], st.act[i], pal)
       )
       -- первый проход: на клетку короче у всех, кроме последней
       st.first[i] = string.rep(' ', i < n and widths[i] - 1 or widths[i])
@@ -274,7 +300,8 @@ function M.colors_for(colors, scheme)
   return copy
 end
 
--- schemes — wezterm.color.get_builtin_schemes(), чтобы найти тему config.color_scheme.
+-- schemes — wezterm.color.get_builtin_schemes(): из неё берутся tab_bar темы
+-- для colors_for и палитра подсветки по config.color_scheme.
 function M.apply(config, schemes)
   config.use_fancy_tab_bar = false
   config.show_new_tab_button_in_tab_bar = false
@@ -283,8 +310,8 @@ function M.apply(config, schemes)
   config.tab_bar_style.new_tab_hover = ''
   config.tab_max_width = TAB_MAX_WIDTH -- признак первого прохода, см. выше
   config.colors = M.colors_for(config.colors, schemes[config.color_scheme or ''])
-  wezterm.on('format-tab-title', function(tab, tabs, _, _, _, max_width)
-    return M.format(tab, tabs, max_width)
+  wezterm.on('format-tab-title', function(tab, tabs, _, config, _, max_width)
+    return M.format(tab, tabs, max_width, palette(schemes, config.color_scheme))
   end)
   wezterm.on('update-status', remember_width)
   wezterm.on('window-resized', remember_width)
