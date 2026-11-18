@@ -4,12 +4,22 @@
 -- длине подписи «N: заголовок» (заголовок — до 48 символов); не влезают —
 -- ужимаются в той же пропорции.
 --
--- format-tab-title вызывается на каждую перерисовку панели по разу на вкладку,
--- поэтому в нём нет обращений к окну и mux: он читает ширину панели из кэша,
--- а раскладку считает один раз на набор (ширина, подписи). Кэш ширины
--- обновляют update-status (раз в status_update_interval) и window-resized.
--- Пока ширина окна неизвестна (первая секунда после старта или перезагрузки
--- конфига) — штатный заголовок.
+-- format-tab-title вызывается двумя проходами на каждую вкладку при каждой
+-- пересборке панели (wezterm-gui/src/tabbar.rs), а пересборка происходит на
+-- каждое изменение любого заголовка: плагины opencode и claude code крутят
+-- спиннер в title по много раз в секунду. Кэш раскладки поэтому двухуровневый
+-- и отдельный на окно:
+--   • ширина окна, число вкладок и все заголовки те же — возвращаются
+--     сохранённые строки, без единого вызова wezterm.column_width;
+--   • сменились заголовки, но ширины подписей те же (кадр спиннера) —
+--     распределение ширин и строки первого прохода не пересчитываются,
+--     пересобираются только изменившиеся вкладки;
+--   • изменилась хоть одна ширина подписи, число вкладок или ширина окна —
+--     полный пересчёт; ширины подписей уцелевших вкладок берутся из кэша.
+-- Раскладка хранится на окно, поэтому несколько окон не сбивают кэш друг
+-- друга. Ширина панели читается из кэша, который обновляют update-status
+-- (раз в status_update_interval) и window-resized. Пока ширина неизвестна
+-- (первая секунда после старта или перезагрузки конфига) — штатный заголовок.
 --
 -- Как WezTerm раскладывает ретро-панель (wezterm-gui/src/tabbar.rs):
 --   1. Первый проход: format-tab-title с max_width = tab_max_width; если сумма
@@ -31,25 +41,43 @@ local M = {}
 local bar_cells = {} -- window_id -> ширина панели в клетках
 local TAB_MAX_WIDTH = 10000
 local TITLE_MAX = 48 -- длиннее — обрезается с «…»; ширина вкладки по обрезанному
-local layout_key, layout_full, layout_first = nil, nil, nil
+
+-- window_id -> раскладка окна:
+--   cells, n                   — ширина панели и число вкладок, для которых собрано
+--   titles, short, lens        — заголовки, обрезанные до TITLE_MAX и ширины
+--                                подписей «N: заголовок» в клетках
+--   widths                     — ширины вкладок, distribute(...)
+--   first, full                — строки первого и второго прохода
+local layout = {}
+
+local function measure_width(window, pane)
+  local size = pane:get_dimensions()
+  if size.cols == 0 then return nil end
+  local cell_width = size.pixel_width / size.cols
+  return math.floor(window:get_dimensions().pixel_width / cell_width)
+end
 
 local function remember_width(window, pane)
-  local ok, cells = pcall(function()
-    local size = pane:get_dimensions()
-    if size.cols == 0 then return nil end
-    local cell_width = size.pixel_width / size.cols
-    return math.floor(window:get_dimensions().pixel_width / cell_width)
-  end)
+  local ok, cells = pcall(measure_width, window, pane)
   if ok and cells ~= nil then bar_cells[window:window_id()] = cells end
 end
 
-local function label_of(tab)
+-- Заголовок вкладки до обрезки: имя вкладки или заголовок активной панели.
+local function raw_title(tab)
   local title = tab.tab_title
   if title == nil or title == '' then title = tab.active_pane.title end
-  if wezterm.column_width(title) > TITLE_MAX then
-    title = wezterm.truncate_right(title, TITLE_MAX - 1) .. '…'
+  return title or ''
+end
+
+-- Обрезка до TITLE_MAX: усечённый заголовок и его ширина в клетках.
+local function shorten(title)
+  local width = wezterm.column_width(title)
+  if width <= TITLE_MAX then
+    return title, width
   end
-  return tostring(tab.tab_index + 1) .. ': ' .. title
+  -- «…» шириной в клетку плюс обрезанный до TITLE_MAX-1 заголовок
+  local short = wezterm.truncate_right(title, TITLE_MAX - 1)
+  return short .. '…', wezterm.column_width(short) + 1
 end
 
 -- Сумма ширин = total, доли пропорциональны весам, остаток от округления
@@ -78,10 +106,11 @@ local function distribute(weights, total)
   return widths
 end
 
-local function fit(label, width)
+-- Строка вкладки шириной width: « подпись… ». len — ширина label в клетках,
+-- чтобы не мерить её заново (она уже известна из раскладки).
+local function fit(label, width, len)
   local inner = width - 2
   if inner < 1 then return string.rep(' ', width) end
-  local len = wezterm.column_width(label)
   if len > inner then
     label = wezterm.truncate_right(label, inner - 1) .. '…'
     len = wezterm.column_width(label)
@@ -90,29 +119,78 @@ local function fit(label, width)
 end
 
 function M.format(tab, tabs, max_width)
-  local cells = bar_cells[tab.window_id]
+  local win = tab.window_id
+  local cells = bar_cells[win]
   if cells == nil then return nil end
 
-  local labels = {}
-  for i, t in ipairs(tabs) do labels[i] = label_of(t) end
-  local key = cells .. '\0' .. table.concat(labels, '\0')
+  local st = layout[win]
+  local n = #tabs
 
-  if key ~= layout_key then
-    if cells < 2 * #tabs then return nil end
-    local weights = {}
-    for i, label in ipairs(labels) do weights[i] = wezterm.column_width(label) + 2 end
-    local widths = distribute(weights, cells)
-    layout_full, layout_first = {}, {}
-    for i, label in ipairs(labels) do
-      layout_full[i] = fit(label, widths[i])
-      -- первый проход: на клетку короче у всех, кроме последней
-      layout_first[i] = string.rep(' ', i < #tabs and widths[i] - 1 or widths[i])
+  -- Быстрый путь: ничего не изменилось — раскладка готова.
+  if st ~= nil and st.cells == cells and st.n == n then
+    local same = true
+    for i = 1, n do
+      if st.titles[i] ~= raw_title(tabs[i]) then same = false break end
     end
-    layout_key = key
+    if same then
+      local i = tab.tab_index + 1
+      if max_width == TAB_MAX_WIDTH then return st.first[i] end
+      return st.full[i]
+    end
   end
+
+  if cells < 2 * n then return nil end
+
+  -- Что-то изменилось. Для вкладок с прежним заголовком ширина подписи
+  -- берётся из старой раскладки; column_width зовётся только для новых.
+  local old = st
+  st = { cells = cells, n = n, titles = {}, short = {}, lens = {}, full = {} }
+  local same_widths = old ~= nil and old.cells == cells and old.n == n
+  local weights = {}
+  for i = 1, n do
+    local title = raw_title(tabs[i])
+    st.titles[i] = title
+    local short, len
+    if same_widths and old.titles[i] == title then
+      short, len = old.short[i], old.lens[i]
+    else
+      short, len = shorten(title)
+      len = #tostring(i) + 2 + len
+      if same_widths and old.lens[i] ~= len then same_widths = false end
+    end
+    st.short[i] = short
+    st.lens[i] = len
+    weights[i] = len + 2
+  end
+
+  if same_widths then
+    -- Ширины подписей не изменились — например, кадр спиннера в заголовке:
+    -- доли и строки первого прохода те же, пересобираются только вкладки
+    -- со сменившимся заголовком.
+    st.widths = old.widths
+    st.first = old.first
+    for i = 1, n do
+      if st.titles[i] == old.titles[i] then
+        st.full[i] = old.full[i]
+      else
+        st.full[i] = fit(tostring(i) .. ': ' .. st.short[i], st.widths[i], st.lens[i])
+      end
+    end
+  else
+    local widths = distribute(weights, cells)
+    st.widths = widths
+    st.first = {}
+    for i = 1, n do
+      st.full[i] = fit(tostring(i) .. ': ' .. st.short[i], widths[i], st.lens[i])
+      -- первый проход: на клетку короче у всех, кроме последней
+      st.first[i] = string.rep(' ', i < n and widths[i] - 1 or widths[i])
+    end
+  end
+  layout[win] = st
+
   local i = tab.tab_index + 1
-  if max_width == TAB_MAX_WIDTH then return layout_first[i] end
-  return layout_full[i]
+  if max_width == TAB_MAX_WIDTH then return st.first[i] end
+  return st.full[i]
 end
 
 -- Копия colors с цветами панели под тему scheme (таблица из
