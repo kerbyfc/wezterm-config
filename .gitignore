@@ -2,3 +2,5 @@
 local.lua
 __pycache__/
 *.log
+# Локальный индекс CodeGraph.
+.codegraph/

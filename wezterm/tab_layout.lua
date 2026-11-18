@@ -9,11 +9,11 @@
 -- каждое изменение любого заголовка: плагины opencode и claude code крутят
 -- спиннер в title по много раз в секунду. Кэш раскладки поэтому двухуровневый
 -- и отдельный на окно:
---   • ширина окна, число вкладок и все заголовки те же — возвращаются
---     сохранённые строки, без единого вызова wezterm.column_width;
---   • сменились заголовки, но ширины подписей те же (кадр спиннера) —
---     распределение ширин и строки первого прохода не пересчитываются,
---     пересобираются только изменившиеся вкладки;
+--   • ширина окна, число вкладок, все заголовки и активность те же —
+--     возвращаются сохранённые строки, без единого вызова wezterm.column_width;
+--   • сменились заголовки или активность, но ширины подписей те же
+--     (кадр спиннера) — распределение ширин и строки первого прохода
+--     не пересчитываются, пересобираются только изменившиеся вкладки;
 --   • изменилась хоть одна ширина подписи, число вкладок или ширина окна —
 --     полный пересчёт; ширины подписей уцелевших вкладок берутся из кэша.
 -- Раскладка хранится на окно, поэтому несколько окон не сбивают кэш друг
@@ -42,10 +42,28 @@ local bar_cells = {} -- window_id -> ширина панели в клетках
 local TAB_MAX_WIDTH = 10000
 local TITLE_MAX = 48 -- длиннее — обрезается с «…»; ширина вкладки по обрезанному
 
+-- Заголовок панели плагин claude-terminal-title почти всегда начинает с глифа
+-- состояния и меняет его много раз в секунду:
+--   ◐ ◓ ◑ ◒ — DEFAULT_SPINNER, «работаю» (U+25D0–U+25D3, соседние код-поинты,
+--             в UTF-8 — E2 97 90–93, поэтому один байт-шаблон ловит любой кадр);
+--   ◍       — DEFAULT_MARKER, «need input»: спиннер встал, ждёт ввода (U+25CD).
+-- Сменишь глифы в настройках плагина — поправь шаблоны здесь.
+local SPINNER = '\xE2\x97[\x90-\x93]'
+local MARKER = '\xE2\x97\x8D'
+-- Неактивной вкладке в состоянии «работаю»/«need input» перекращается только
+-- текст (синий/оранжевый), активной — и фон, а текст становится чёрным:
+-- цветной текст на светлом фоне активной вкладки темы (розовом у Catppuccin
+-- Frappe) не читается.
+local SPINNER_COLOR = '#7aa2f7'
+local NEED_COLOR = '#ef9f76'
+local ACTIVE_TEXT = '#000000'
+
 -- window_id -> раскладка окна:
 --   cells, n                   — ширина панели и число вкладок, для которых собрано
 --   titles, short, lens        — заголовки, обрезанные до TITLE_MAX и ширины
 --                                подписей «N: заголовок» в клетках
+--   act                        — активность вкладок: от неё зависят цвета,
+--                                поэтому в проверках наравне с titles
 --   widths                     — ширины вкладок, distribute(...)
 --   first, full                — строки первого и второго прохода
 local layout = {}
@@ -80,6 +98,23 @@ local function shorten(title)
   return short .. '…', wezterm.column_width(short) + 1
 end
 
+-- Цвета вкладки по глифу состояния в её заголовке: крутится спиннер — синий,
+-- маркер «need input» — оранжевый. Неактивной вкладке перекращается только
+-- текст, активной — чёрный текст на цветном фоне (см. цвета выше). Без глифа
+-- — nil, остаются цвета темы из colors.tab_bar.
+local function tab_colors(title, is_active)
+  local color
+  if title:find(SPINNER) then
+    color = SPINNER_COLOR
+  elseif title:find(MARKER) then
+    color = NEED_COLOR
+  else
+    return
+  end
+  if is_active then return ACTIVE_TEXT, color end
+  return color
+end
+
 -- Сумма ширин = total, доли пропорциональны весам, остаток от округления
 -- раздаётся по наибольшим дробным частям.
 local function distribute(weights, total)
@@ -107,15 +142,23 @@ local function distribute(weights, total)
 end
 
 -- Строка вкладки шириной width: « подпись… ». len — ширина label в клетках,
--- чтобы не мерить её заново (она уже известна из раскладки).
-local function fit(label, width, len)
+-- чтобы не мерить её заново (она уже известна из раскладки). fg и bg — цвета
+-- спиннера, обычно nil: хватает цветов темы из colors.tab_bar; явные
+-- Foreground/Background перекрывают только себя, остальное остаётся от темы
+-- (tabbar.rs парсит кастомный заголовок поверх атрибутов active/inactive_tab).
+local function fit(label, width, len, fg, bg)
   local inner = width - 2
   if inner < 1 then return string.rep(' ', width) end
   if len > inner then
     label = wezterm.truncate_right(label, inner - 1) .. '…'
     len = wezterm.column_width(label)
   end
-  return ' ' .. label .. string.rep(' ', width - len - 1)
+  local s = ' ' .. label .. string.rep(' ', width - len - 1)
+  if fg == nil then return s end
+  local items = { { Foreground = { Color = fg } } }
+  if bg ~= nil then items[#items + 1] = { Background = { Color = bg } } end
+  items[#items + 1] = { Text = s }
+  return wezterm.format(items)
 end
 
 function M.format(tab, tabs, max_width)
@@ -130,7 +173,9 @@ function M.format(tab, tabs, max_width)
   if st ~= nil and st.cells == cells and st.n == n then
     local same = true
     for i = 1, n do
-      if st.titles[i] ~= raw_title(tabs[i]) then same = false break end
+      if st.titles[i] ~= raw_title(tabs[i]) or st.act[i] ~= tabs[i].is_active then
+        same = false break
+      end
     end
     if same then
       local i = tab.tab_index + 1
@@ -144,12 +189,13 @@ function M.format(tab, tabs, max_width)
   -- Что-то изменилось. Для вкладок с прежним заголовком ширина подписи
   -- берётся из старой раскладки; column_width зовётся только для новых.
   local old = st
-  st = { cells = cells, n = n, titles = {}, short = {}, lens = {}, full = {} }
+  st = { cells = cells, n = n, titles = {}, act = {}, short = {}, lens = {}, full = {} }
   local same_widths = old ~= nil and old.cells == cells and old.n == n
   local weights = {}
   for i = 1, n do
     local title = raw_title(tabs[i])
     st.titles[i] = title
+    st.act[i] = tabs[i].is_active
     local short, len
     if same_widths and old.titles[i] == title then
       short, len = old.short[i], old.lens[i]
@@ -166,14 +212,19 @@ function M.format(tab, tabs, max_width)
   if same_widths then
     -- Ширины подписей не изменились — например, кадр спиннера в заголовке:
     -- доли и строки первого прохода те же, пересобираются только вкладки
-    -- со сменившимся заголовком.
+    -- со сменившимся заголовком или активностью.
     st.widths = old.widths
     st.first = old.first
     for i = 1, n do
-      if st.titles[i] == old.titles[i] then
+      if st.titles[i] == old.titles[i] and st.act[i] == old.act[i] then
         st.full[i] = old.full[i]
       else
-        st.full[i] = fit(tostring(i) .. ': ' .. st.short[i], st.widths[i], st.lens[i])
+        st.full[i] = fit(
+          tostring(i) .. ': ' .. st.short[i],
+          st.widths[i],
+          st.lens[i],
+          tab_colors(st.titles[i], st.act[i])
+        )
       end
     end
   else
@@ -181,7 +232,12 @@ function M.format(tab, tabs, max_width)
     st.widths = widths
     st.first = {}
     for i = 1, n do
-      st.full[i] = fit(tostring(i) .. ': ' .. st.short[i], widths[i], st.lens[i])
+      st.full[i] = fit(
+        tostring(i) .. ': ' .. st.short[i],
+        widths[i],
+        st.lens[i],
+        tab_colors(st.titles[i], st.act[i])
+      )
       -- первый проход: на клетку короче у всех, кроме последней
       st.first[i] = string.rep(' ', i < n and widths[i] - 1 or widths[i])
     end
