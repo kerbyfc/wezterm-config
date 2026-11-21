@@ -26,7 +26,8 @@
 --      длин больше `ширина − (вкладок − 1) − длина кнопки (+)`, каждая вкладка
 --      обрезается до равной доли. Длина (+) вычитается, даже когда кнопка
 --      скрыта, поэтому её текст — пустая строка.
---   2. Второй проход: format-tab-title с max_width = длина из первого прохода;
+--   2. Второй проход: format-tab-title для отрисовки. До 19.11.2026 (#7526)
+--      max_width был равен длине из первого прохода, теперь — tab_max_width;
 --      результат обрезается только до tab_max_width.
 -- Поэтому в первом проходе отдаём ширины на `ширина − (вкладок − 1)`, а во
 -- втором — на полную ширину: вкладки закрывают всю строку. Цена — у вкладок
@@ -39,6 +40,9 @@ local wezterm = require('wezterm')
 local M = {}
 
 local bar_cells = {} -- window_id -> ширина панели в клетках
+-- window_id -> { pass = 1|2, last = tab_index прошлого вызова }: какой проход
+-- format-tab-title идёт сейчас, см. M.format.
+local passes = {}
 local TAB_MAX_WIDTH = 10000
 local TITLE_MAX = 48 -- длиннее — обрезается с «…»; ширина вкладки по обрезанному
 
@@ -189,11 +193,37 @@ end
 
 function M.format(tab, tabs, max_width, pal)
   local win = tab.window_id
+  local n = #tabs
+
+  -- Какой это проход. WezTerm зовёт format-tab-title двумя проходами по всем
+  -- вкладкам: сначала для замера длин, затем для отрисовки. До 19.11.2026
+  -- (#7526) второй проход приходил с max_width = длина из первого, и признаком
+  -- служил сам max_width. Теперь оба прохода приходят с tab_max_width, поэтому
+  -- проход определяется по порядку вызовов: новый проход начинается с вкладки 0
+  -- (у единственной вкладки — каждый вызов). Признак по max_width оставлен,
+  -- чтобы работать и на старых сборках.
+  local ps = passes[win]
+  if ps == nil then ps = { pass = 2 }; passes[win] = ps end
+  local first_pass
+  if max_width ~= TAB_MAX_WIDTH then
+    ps.pass = 2
+    first_pass = false
+  else
+    -- Новый проход начинается с вкладки 0, если прошлый вызов был последней
+    -- вкладкой (у единственной вкладки это каждый вызов). n запоминается:
+    -- число вкладок могло измениться между пересборками.
+    if ps.last == nil or (tab.tab_index == 0 and ps.last == ps.n - 1) then
+      ps.pass = ps.pass == 1 and 2 or 1
+    end
+    first_pass = ps.pass == 1
+  end
+  ps.last = tab.tab_index
+  ps.n = n
+
   local cells = bar_cells[win]
   if cells == nil then return nil end
 
   local st = layout[win]
-  local n = #tabs
 
   -- Быстрый путь: ничего не изменилось — раскладка готова.
   if st ~= nil and st.cells == cells and st.n == n and st.pal == pal then
@@ -205,7 +235,7 @@ function M.format(tab, tabs, max_width, pal)
     end
     if same then
       local i = tab.tab_index + 1
-      if max_width == TAB_MAX_WIDTH then return st.first[i] end
+      if first_pass then return st.first[i] end
       return st.full[i]
     end
   end
@@ -271,7 +301,7 @@ function M.format(tab, tabs, max_width, pal)
   layout[win] = st
 
   local i = tab.tab_index + 1
-  if max_width == TAB_MAX_WIDTH then return st.first[i] end
+  if first_pass then return st.first[i] end
   return st.full[i]
 end
 
@@ -308,7 +338,7 @@ function M.apply(config, schemes)
   config.tab_bar_style = config.tab_bar_style or {}
   config.tab_bar_style.new_tab = '' -- длина (+) вычитается из ширины и у скрытой
   config.tab_bar_style.new_tab_hover = ''
-  config.tab_max_width = TAB_MAX_WIDTH -- признак первого прохода, см. выше
+  config.tab_max_width = TAB_MAX_WIDTH -- max_width первого прохода, см. выше
   config.colors = M.colors_for(config.colors, schemes[config.color_scheme or ''])
   wezterm.on('format-tab-title', function(tab, tabs, _, config, _, max_width)
     return M.format(tab, tabs, max_width, palette(schemes, config.color_scheme))
